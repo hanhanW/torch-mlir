@@ -1890,15 +1890,16 @@ void mlir::torch::onnx_c::populateDefaultDomainAtoF(
                 binder.op,
                 "padding list size does not match the number of axes");
           }
+          bool isPerAxisPadded = padding.size() == rank - 2;
           SmallVector<int64_t> inferredOutputPadding;
           inferredOutputPadding.reserve(rank - 2);
           for (unsigned i = 0; i < rank - 2; i++) {
             // ONNX pads are laid out as [x1_begin, ..., xN_begin, x1_end,
             // ..., xN_end] when fully specified, or as a per-axis symmetric
             // value when half-sized.
-            int64_t totalPadding = padding.size() == 2 * (rank - 2)
-                                       ? padding[i] + padding[i + rank - 2]
-                                       : 2 * padding[i];
+            int64_t totalPadding =
+                isPerAxisPadded ? 2 * padding[i]
+                                : padding[i] + padding[i + rank - 2];
             int64_t inferredDim = strides[i] * (inputShape[2 + i] - 1) -
                                   totalPadding +
                                   ((kernelShape[i] - 1) * dilations[i] + 1);
@@ -1906,8 +1907,7 @@ void mlir::torch::onnx_c::populateDefaultDomainAtoF(
             if (inferredOutputPaddingValue < 0) {
               return rewriter.notifyMatchFailure(
                   binder.op,
-                  "output_shape would require a negative output_padding, "
-                  "which is not supported");
+                  "output_shape would require a negative output_padding");
             }
             if (inferredOutputPaddingValue >= strides[i]) {
               return rewriter.notifyMatchFailure(
@@ -1920,32 +1920,36 @@ void mlir::torch::onnx_c::populateDefaultDomainAtoF(
           return inferredOutputPadding;
         };
 
-        if (!outputShape.empty() && outputPadding != defaultOutputPadding) {
-          return rewriter.notifyMatchFailure(
-              binder.op,
-              "output_shape with explicit output_padding is not supported");
-        }
+        auto applyOutputPaddingFromOutputShape = [&]() -> LogicalResult {
+          FailureOr<SmallVector<int64_t>> inferredOutputPadding =
+              inferOutputPaddingFromOutputShape();
+          if (failed(inferredOutputPadding))
+            return failure();
+          if (outputPadding != defaultOutputPadding &&
+              outputPadding != *inferredOutputPadding) {
+            return rewriter.notifyMatchFailure(
+                binder.op,
+                "output_shape and output_padding imply different "
+                "output_padding values");
+          }
+          outputPadding = *inferredOutputPadding;
+          return success();
+        };
 
         if (autoPad == "VALID") {
           // Zero padding.
           padding = defaultPadding;
           if (!outputShape.empty()) {
-            FailureOr<SmallVector<int64_t>> inferredOutputPadding =
-                inferOutputPaddingFromOutputShape();
-            if (failed(inferredOutputPadding))
+            if (failed(applyOutputPaddingFromOutputShape()))
               return failure();
-            outputPadding = *inferredOutputPadding;
           }
         } else if (autoPad == "NOTSET") {
           // Explicit padding; read pads with defaults.
           if (binder.s64IntegerArrayAttr(padding, "pads", defaultPadding))
             return failure();
           if (!outputShape.empty()) {
-            FailureOr<SmallVector<int64_t>> inferredOutputPadding =
-                inferOutputPaddingFromOutputShape();
-            if (failed(inferredOutputPadding))
+            if (failed(applyOutputPaddingFromOutputShape()))
               return failure();
-            outputPadding = *inferredOutputPadding;
           }
         } else { // autopad == SAME_UPPER or SAME_LOWER
           // Auto-padding. When output_shape is not specified, default it to
