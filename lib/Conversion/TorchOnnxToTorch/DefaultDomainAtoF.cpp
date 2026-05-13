@@ -1897,9 +1897,9 @@ void mlir::torch::onnx_c::populateDefaultDomainAtoF(
             // ONNX pads are laid out as [x1_begin, ..., xN_begin, x1_end,
             // ..., xN_end] when fully specified, or as a per-axis symmetric
             // value when half-sized.
-            int64_t totalPadding =
-                isPerAxisPadded ? 2 * padding[i]
-                                : padding[i] + padding[i + rank - 2];
+            int64_t totalPadding = isPerAxisPadded
+                                       ? 2 * padding[i]
+                                       : padding[i] + padding[i + rank - 2];
             int64_t inferredDim = strides[i] * (inputShape[2 + i] - 1) -
                                   totalPadding +
                                   ((kernelShape[i] - 1) * dilations[i] + 1);
@@ -1928,9 +1928,8 @@ void mlir::torch::onnx_c::populateDefaultDomainAtoF(
           if (outputPadding != defaultOutputPadding &&
               outputPadding != *inferredOutputPadding) {
             return rewriter.notifyMatchFailure(
-                binder.op,
-                "output_shape and output_padding imply different "
-                "output_padding values");
+                binder.op, "output_shape and output_padding imply different "
+                           "output_padding values");
           }
           outputPadding = *inferredOutputPadding;
           return success();
